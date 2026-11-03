@@ -12,6 +12,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -70,16 +71,19 @@ func main() {
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
 	batch := make([]Event, 0, batchSize)
+	var pending []byte
 	for scanner.Scan() {
-		line := scanner.Bytes()
+		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 {
 			continue
 		}
+		pending = append(pending, line...)
 		var ev Event
-		if err := json.Unmarshal(line, &ev); err != nil {
-			fmt.Fprintf(os.Stderr, "skipping bad line: %v\n", err)
+		if err := json.Unmarshal(pending, &ev); err != nil {
+			// not valid JSON yet — might be a multi-line record, keep accumulating
 			continue
 		}
+		pending = nil // reset for next record
 		batch = append(batch, ev)
 		if len(batch) == batchSize {
 			processBatch(batch)
