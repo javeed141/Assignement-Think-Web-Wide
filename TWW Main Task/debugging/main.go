@@ -46,6 +46,9 @@ var stats = map[string]*CampaignStats{}
 // track(), which runs on the main goroutine.
 var openedBy = map[string]bool{}
 
+// seen tracks event IDs across the entire file, not just within a batch.
+var seen = map[string]bool{}
+
 const (
 	batchSize  = 200
 	numWorkers = 8
@@ -98,7 +101,6 @@ func main() {
 // ordered access, then fans the counter updates out to a worker pool. The
 // counters are plain ints, so the increments themselves are cheap.
 func processBatch(events []Event) {
-	seen := make(map[string]bool) // event IDs we have already processed
 	unique := make([]Event, 0, len(events))
 	for _, ev := range events {
 		if seen[ev.EventID] {
@@ -136,20 +138,25 @@ func track(ev Event) {
 	cs := stats[ev.CampaignID]
 	switch ev.Type {
 	case "opened":
-		if !openedBy[ev.ContactID] {
-			openedBy[ev.ContactID] = true
+		key := ev.CampaignID + ":" + ev.ContactID
+		if !openedBy[key] {
+			openedBy[key] = true
 			cs.UniqueOpens++
 		}
 	case "delivered":
-		day := ev.Timestamp.Local().Format("2006-01-02")
+		day := ev.Timestamp.UTC().Format("2006-01-02")
 		cs.DailyDelivered[day]++
 	}
 }
+
+var applyMu sync.Mutex
 
 // apply updates the counters for a single event. The stats record always
 // exists at this point.
 func apply(ev Event) {
 	cs := stats[ev.CampaignID]
+	applyMu.Lock()
+	defer applyMu.Unlock()
 	switch ev.Type {
 	case "sent":
 		cs.Sent++
